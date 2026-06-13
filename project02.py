@@ -63,6 +63,8 @@ def load_music_data(folder_path, n_mfcc=20):
     return X, y
 
 #%%
+#Data reading & proccessing
+
 folder_path = Path.cwd() / "Data" / "genres_original"
 n_mfcc=13 #Feature number ~ hyperparameter
 X, y = load_music_data(folder_path, n_mfcc) 
@@ -70,6 +72,8 @@ print(len(y))
 print(np.shape(X))
 
 #%%
+#Feature plots
+
 plt.imshow((X[:, :n_mfcc].T), cmap='viridis', origin='lower', aspect=40)
 plt.title("Averaged MFCCs")
 plt.xlabel("Song number")
@@ -82,6 +86,8 @@ plt.ylabel("MFCC coefficient")
 plt.show()
 
 # %%
+#Initial kNN model
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
@@ -96,27 +102,26 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 scaler = StandardScaler()
 
-# "Fit" learns the mean/variance of the training data, "transform" applies it
+#"Fit" learns the mean/variance of the training data, "transform" applies it
 X_train_scaled = scaler.fit_transform(X_train)
 
-# ONLY "transform" the test data. Never "fit" on test data (that is cheating!)
+#ONLY "transform" the test data. Never "fit" on test data (that is cheating!)
 X_test_scaled = scaler.transform(X_test)
 
-# --- Step 3: Initialize and Train the Model ---
-# Set k=5 as a standard starting point
-knn = KNeighborsClassifier(n_neighbors=25, metric='euclidean') #Hyperparameter
+#Initialize and Train the Model ---
+knn = KNeighborsClassifier(n_neighbors=25, metric='euclidean') #Hyperparameter!
 
-# Train the model on the scaled data
+#Train the model on the scaled data
 knn.fit(X_train_scaled, y_train)
 
-# --- Step 4: Make Predictions and Evaluate ---
+#Making Predictions and Evaluation
 y_pred = knn.predict(X_test_scaled)
 
-# Print out the results
+#Print out the results
 accuracy = accuracy_score(y_test, y_pred)
 print(f"Overall Accuracy: {accuracy * 100:.2f}%\n")
 
-# The classification report shows exactly which genres the model is struggling with
+#The classification report shows exactly which genres the model is struggling with
 print("Detailed Classification Report:")
 print(classification_report(y_test, y_pred))
 # %%
