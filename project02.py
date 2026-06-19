@@ -1,14 +1,12 @@
-#%%
-#Data import function
+# %%
+# Data import function
 
 import os
 import numpy as np
 import pandas as pd
 import librosa
-from pathlib import Path
-import matplotlib.pyplot as plt
 
-def load_music_data(folder_path, n_mfcc=20):
+def load_music_data(folder_path, n_mfcc=13):
     """
     Loads .wav files, extracts MFCC features,
     and stores the genre label from the filename.
@@ -48,6 +46,7 @@ def load_music_data(folder_path, n_mfcc=20):
                 # Extract genre from filename
                 # Example: blues00000.wav -> blues
                 genre = ''.join([char for char in file_name if char.isalpha()])
+                genre = genre.rstrip("wav")
 
                 # Store data
                 features.append(feature_vector)
@@ -62,17 +61,75 @@ def load_music_data(folder_path, n_mfcc=20):
 
     return X, y
 
-#%%
-#Data reading & proccessing
+# %%
+# Data reading & proccessing
+
+from pathlib import Path
 
 folder_path = Path.cwd() / "Data" / "genres_original"
-n_mfcc=13 #Feature number ~ hyperparameter
+n_mfcc=20 #Feature number ~ hyperparameter
 X, y = load_music_data(folder_path, n_mfcc) 
 print(len(y))
 print(np.shape(X))
 
-#%%
-#Feature plots
+# %%
+# Data splitting
+
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, 
+    test_size=0.2, 
+    random_state=67, 
+    stratify=y
+)
+
+# %%
+# Initial kNN model
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import GridSearchCV
+
+scaler = StandardScaler()
+
+# "Fit" learns the mean/variance of the training data, "transform" applies it
+X_train_scaled = scaler.fit_transform(X_train)
+
+# This searches for the best parameters number using cv-fold cross validation - Hyperparameter?
+param_grid = {
+    'n_neighbors': 3 + 2*np.arange(25),
+    'metric': ['euclidean', 'minkowski', 'cosine', 'hamming'],
+    'weights': ['uniform', 'distance']
+    }
+
+grid_search = GridSearchCV(KNeighborsClassifier(), param_grid, cv=40, scoring='accuracy')
+grid_search.fit(X_train_scaled, y_train)
+
+print(f"Best K Value: {grid_search.best_params_['n_neighbors']}")
+print(f"Best distance type: {grid_search.best_params_['metric']}")
+print(f"Best weighting type: {grid_search.best_params_['weights']}")
+print(f"Best CV Accuracy: {grid_search.best_score_ * 100:.2f}%")
+
+# ONLY "transform" the test data. Never "fit" on test data (that is cheating!)
+X_test_scaled = scaler.transform(X_test)
+
+# Making Predictions and Evaluation
+best_knn = grid_search.best_estimator_
+y_pred = best_knn.predict(X_test_scaled)
+
+# Print out the results
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Overall Accuracy: {accuracy * 100:.2f}%\n")
+
+# The classification report shows exactly which genres the model is struggling with
+print("Detailed Classification Report:")
+print(classification_report(y_test, y_pred))
+
+# %%
+# Feature plots
+
+import matplotlib.pyplot as plt
 
 plt.imshow((X[:, :n_mfcc].T), cmap='viridis', origin='lower', aspect=40)
 plt.title("Averaged MFCCs")
@@ -86,42 +143,69 @@ plt.ylabel("MFCC coefficient")
 plt.show()
 
 # %%
-#Initial kNN model
+# More visualizations
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.manifold import TSNE
+import pandas as pd
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, 
-    test_size=0.2, 
-    random_state=67, 
-    stratify=y
+# Reduce dimensions to 2 with t-SNE
+tsne = TSNE(n_components=2, random_state=42)
+X_embedded = tsne.fit_transform(X_train_scaled)
+df_tsne = pd.DataFrame(X_embedded, columns=['Component 1', 'Component 2'])
+df_tsne['Genre'] = y_train
+sns.scatterplot(data=df_tsne, x='Component 1', y='Component 2', hue='Genre', palette='tab10', alpha=0.7)
+plt.title("t-SNE Projection of Data Separation")
+
+# 2D with first two mfccs
+mfcc_1 = X[:, 0]
+mfcc_2 = X[:, 1]
+plot_df = pd.DataFrame({
+    'MFCC 1': mfcc_1,
+    'MFCC 2': mfcc_2,
+    'Genre': y
+})
+plt.figure(figsize=(10, 7))
+sns.scatterplot(
+    data=plot_df, 
+    x='MFCC 1', 
+    y='MFCC 2', 
+    hue='Genre', 
+    palette='tab10',  # Color palette
+    alpha=0.6,        # Transparency
+    edgecolor='none'
 )
+plt.title('Data Separation via First Two MFCC Features', fontsize=14, fontweight='bold')
+plt.xlabel('MFCC 1 (Overall Energy / Spectral Envelope)')
+plt.ylabel('MFCC 2 (Bright vs. Dull / Spectral Slope)')
+plt.legend(title='Genres', bbox_to_anchor=(1.05, 1), loc='upper left') # Moves legend outside
+plt.tight_layout()
+plt.show()
 
-scaler = StandardScaler()
+# 2D with first two variances
+var_1 = X[:, n_mfcc]
+var_2 = X[:, n_mfcc+1]
+plot_df = pd.DataFrame({
+    'Variance 1': var_1,
+    'Variance 2': var_2,
+    'Genre': y
+})
+plt.figure(figsize=(10, 7))
+sns.scatterplot(
+    data=plot_df, 
+    x='Variance 1', 
+    y='Variance 2', 
+    hue='Genre', 
+    palette='tab10',  # Color palette
+    alpha=0.6,        # Transparency
+    edgecolor='none'
+)
+plt.title('Data Separation via First Two MFCC Variances', fontsize=14, fontweight='bold')
+plt.xlabel('MFCC 1 (Overall Energy / Spectral Envelope Variance)')
+plt.ylabel('MFCC 2 (Bright vs. Dull / Spectral Slope Variance)')
+plt.legend(title='Genres', bbox_to_anchor=(1.05, 1), loc='upper left') # Moves legend outside
+plt.tight_layout()
+plt.show()
 
-#"Fit" learns the mean/variance of the training data, "transform" applies it
-X_train_scaled = scaler.fit_transform(X_train)
-
-#ONLY "transform" the test data. Never "fit" on test data (that is cheating!)
-X_test_scaled = scaler.transform(X_test)
-
-#Initialize and Train the Model ---
-knn = KNeighborsClassifier(n_neighbors=25, metric='euclidean') #Hyperparameter!
-
-#Train the model on the scaled data
-knn.fit(X_train_scaled, y_train)
-
-#Making Predictions and Evaluation
-y_pred = knn.predict(X_test_scaled)
-
-#Print out the results
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Overall Accuracy: {accuracy * 100:.2f}%\n")
-
-#The classification report shows exactly which genres the model is struggling with
-print("Detailed Classification Report:")
-print(classification_report(y_test, y_pred))
 # %%
