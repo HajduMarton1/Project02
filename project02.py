@@ -5,6 +5,7 @@ import os
 import numpy as np
 import pandas as pd
 import librosa
+import warnings
 
 def load_music_data(folder_path, n_mfcc=13):
     """
@@ -18,6 +19,9 @@ def load_music_data(folder_path, n_mfcc=13):
     features = []
     labels = []
     song_ids = []  # Track the source file
+
+    # Ignore warnings from Librosa about silent audio segments
+    warnings.filterwarnings('ignore', category=UserWarning)
 
     # Loop through all files in the folder
     for file_name in os.listdir(folder_path):
@@ -44,28 +48,47 @@ def load_music_data(folder_path, n_mfcc=13):
                     #Only process correctly sized segments
                     if len(segment) == samples_per_segment:
                         
-                        # Extract MFCC features
-                        mfccs = librosa.feature.mfcc(
-                            y=segment,
-                            sr=sample_rate,
-                            n_mfcc=n_mfcc
-                        )
-
-                        # Take the mean of each MFCC coefficient
+                        # 1. Base MFCCs (Timbre)
+                        mfccs = librosa.feature.mfcc(y=segment, sr=sample_rate, n_mfcc=n_mfcc)
                         mfccs_mean = np.mean(mfccs.T, axis=0)
-                        
-                        #Take the variance of each MFCC coefficient
                         mfccs_var = np.var(mfccs.T, axis=0)
                         
-                        #Combine features (horizontally for classifier)
-                        feature_vector = np.hstack((mfccs_mean, mfccs_var))
+                        """# 2. Delta & Delta-Delta MFCCs (Temporal change of Timbre)
+                        delta_mfccs = librosa.feature.delta(mfccs)
+                        delta_mfccs_mean = np.mean(delta_mfccs.T, axis=0)
+                        delta_mfccs_var = np.var(delta_mfccs.T, axis=0)
                         
-                        # Extract genre from filename
-                        # Example: blues00000.wav -> blues
-                        genre = ''.join([char for char in file_name if char.isalpha()])
-                        genre = genre.replace("wav", "")
+                        delta2_mfccs = librosa.feature.delta(mfccs, order=2)
+                        delta2_mfccs_mean = np.mean(delta2_mfccs.T, axis=0)
+                        delta2_mfccs_var = np.var(delta2_mfccs.T, axis=0)"""
+                        
+                        # 3. Chroma STFT (Harmony / Pitch Classes)
+                        chroma = librosa.feature.chroma_stft(y=segment, sr=sample_rate)
+                        chroma_mean = np.mean(chroma.T, axis=0)
+                        chroma_var = np.var(chroma.T, axis=0)
+                        
+                        # 4. Spectral Centroid (Brightness of Sound)
+                        centroid = librosa.feature.spectral_centroid(y=segment, sr=sample_rate)
+                        centroid_mean = np.mean(centroid.T, axis=0)
+                        centroid_var = np.var(centroid.T, axis=0)
+                        
+                        """# 5. Tempo / BPM (Rhythm)
+                        tempo_data, _ = librosa.beat.beat_track(y=segment, sr=sample_rate)
+                        # Wrap in np.array to ensure it stacks cleanly horizontally
+                        tempo = np.array([np.mean(tempo_data)])"""
 
-                        # Store data
+                        # Combine all features into one row
+                        feature_vector = np.hstack((
+                            mfccs_mean, mfccs_var,
+                            #delta_mfccs_mean, delta_mfccs_var,
+                            #delta2_mfccs_mean, delta2_mfccs_var,
+                            chroma_mean, chroma_var,
+                            centroid_mean, centroid_var,
+                            #tempo
+                        ))
+                        
+                        genre = ''.join([char for char in file_name if char.isalpha()]).replace("wav", "")
+
                         features.append(feature_vector)
                         labels.append(genre)
                         song_ids.append(file_name)
@@ -86,7 +109,7 @@ def load_music_data(folder_path, n_mfcc=13):
 from pathlib import Path
 
 folder_path = Path.cwd() / "Data" / "genres_original"
-n_mfcc=20 #Feature number ~ hyperparameter
+n_mfcc=15 #Feature number ~ hyperparameter
 X, y, groups = load_music_data(folder_path, n_mfcc) 
 print(len(y))
 print(np.shape(X))
@@ -100,7 +123,7 @@ from sklearn.model_selection import GroupShuffleSplit # For protection against
 # target leakage
 
 # Split the data, keeping segments of the same song together
-gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=42)
+gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=50)
 
 # gss.split yields indices for train and test
 train_idx, test_idx = next(gss.split(X, y, groups=groups))
@@ -165,6 +188,7 @@ song_predictions = results_df.groupby('song_id').agg(
 
 final_accuracy = accuracy_score(song_predictions['true_genre'], song_predictions['predicted_genre'])
 
+print(f"Best CV Accuracy (GroupKFold): {grid_search.best_score_ * 100:.2f}%")
 print(f"Segment-level Accuracy: {accuracy_score(y_test, y_pred_segments) * 100:.2f}%")
 print(f"Song-level Accuracy (Majority Vote): {final_accuracy * 100:.2f}%\n")
 
@@ -176,12 +200,12 @@ print(classification_report(song_predictions['true_genre'], song_predictions['pr
 
 import matplotlib.pyplot as plt
 
-plt.imshow((X[:, :n_mfcc].T), cmap='viridis', origin='lower', aspect=40)
+plt.imshow((X[:, :n_mfcc].T), cmap='viridis', origin='lower', aspect=200)
 plt.title("Averaged MFCCs")
 plt.xlabel("Song number")
 plt.ylabel("MFCC coefficient")
 plt.show()
-plt.imshow((X[:, n_mfcc:].T), cmap='viridis', origin='lower', aspect=40)
+plt.imshow((X[:, n_mfcc:2*n_mfcc].T), cmap='viridis', origin='lower', aspect=200)
 plt.title("Variance of MFCCs")
 plt.xlabel("Song number")
 plt.ylabel("MFCC coefficient")
