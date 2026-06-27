@@ -109,7 +109,7 @@ def load_music_data(folder_path, n_mfcc=13):
 from pathlib import Path
 
 folder_path = Path.cwd() / "Data" / "genres_original"
-n_mfcc=15 #Feature number ~ hyperparameter
+n_mfcc=15 #Mfcc feature number ~ hyperparameter
 X, y, groups = load_music_data(folder_path, n_mfcc) 
 print(len(y))
 print(np.shape(X))
@@ -133,7 +133,7 @@ y_train, y_test = y[train_idx], y[test_idx]
 groups_train, groups_test = groups[train_idx], groups[test_idx]
 
 # %%
-# Initial kNN model
+# kNN model
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
@@ -163,7 +163,7 @@ print(f"Best K Value: {grid_search.best_params_['n_neighbors']}")
 print(f"Best distance type: {grid_search.best_params_['metric']}")
 print(f"Best weighting type: {grid_search.best_params_['weights']}")
 
-# ONLY "transform" the test data. Never "fit" on test data (that is cheating!)
+# Only "transform" the test data
 X_test_scaled = scaler.transform(X_test)
 
 # Making Predictions and Evaluation
@@ -278,9 +278,7 @@ plt.tight_layout()
 plt.show()
 
 # %%
-
-# %%
-# Predict genres of new songs
+# Predict genres of new (imported) songs
 
 from pathlib import Path
 from collections import Counter
