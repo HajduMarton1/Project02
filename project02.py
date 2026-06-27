@@ -278,3 +278,92 @@ plt.tight_layout()
 plt.show()
 
 # %%
+
+# %%
+# Predict genres of new songs
+
+from pathlib import Path
+from collections import Counter
+
+unknown_folder = Path.cwd() / "Data" / "unknown_music"
+
+for file_name in os.listdir(unknown_folder):
+
+    if not file_name.endswith(".wav"):
+        continue
+
+    file_path = unknown_folder / file_name
+
+    try:
+        audio, sample_rate = librosa.load(file_path, sr=None)
+
+        segment_duration = 3
+        samples_per_segment = int(segment_duration * sample_rate)
+
+        feature_list = []
+
+        # Extract features from every 3-second segment
+        for i in range(0, len(audio), samples_per_segment):
+
+            segment = audio[i:i + samples_per_segment]
+
+            if len(segment) != samples_per_segment:
+                continue
+
+            # MFCC
+            mfccs = librosa.feature.mfcc(
+                y=segment,
+                sr=sample_rate,
+                n_mfcc=n_mfcc
+            )
+            mfccs_mean = np.mean(mfccs.T, axis=0)
+            mfccs_var = np.var(mfccs.T, axis=0)
+
+            # Chroma
+            chroma = librosa.feature.chroma_stft(
+                y=segment,
+                sr=sample_rate
+            )
+            chroma_mean = np.mean(chroma.T, axis=0)
+            chroma_var = np.var(chroma.T, axis=0)
+
+            # Spectral centroid
+            centroid = librosa.feature.spectral_centroid(
+                y=segment
+            )
+            centroid_mean = np.mean(centroid.T, axis=0)
+            centroid_var = np.var(centroid.T, axis=0)
+
+            feature_vector = np.hstack((
+                mfccs_mean,
+                mfccs_var,
+                chroma_mean,
+                chroma_var,
+                centroid_mean,
+                centroid_var
+            ))
+
+            feature_list.append(feature_vector)
+
+        if len(feature_list) == 0:
+            print(f"{file_name}: No valid segments found.")
+            continue
+
+        # Scale features
+        X_new = np.array(feature_list)
+        X_new_scaled = scaler.transform(X_new)
+
+        # Predict every segment
+        segment_predictions = best_knn.predict(X_new_scaled)
+
+        # Majority vote
+        final_prediction = Counter(segment_predictions).most_common(1)[0][0]
+
+        print(f"\nFile: {file_name}")
+        print(f"Predicted genre: {final_prediction}")
+
+        print("Segment predictions:")
+        print(segment_predictions)
+
+    except Exception as e:
+        print(f"Error processing {file_name}: {e}")
