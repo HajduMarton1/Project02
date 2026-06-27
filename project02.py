@@ -156,12 +156,83 @@ param_grid = {
 # GroupKFold split with 5 splits
 gkf = GroupKFold(n_splits=5)
 
-grid_search = GridSearchCV(KNeighborsClassifier(), param_grid, cv=gkf, scoring='accuracy')
+grid_search = GridSearchCV(KNeighborsClassifier(), param_grid, cv=gkf, scoring='accuracy', return_train_score=True)
 grid_search.fit(X_train_scaled, y_train, groups=groups_train)
 
 print(f"Best K Value: {grid_search.best_params_['n_neighbors']}")
 print(f"Best distance type: {grid_search.best_params_['metric']}")
 print(f"Best weighting type: {grid_search.best_params_['weights']}")
+
+# %%
+# Accuracy vs. k plot
+
+results = pd.DataFrame(grid_search.cv_results_)
+
+best_metric = grid_search.best_params_['metric']
+best_weight = grid_search.best_params_['weights']
+
+plot_data = results[
+    (results['param_metric'] == best_metric) &
+    (results['param_weights'] == best_weight)
+].sort_values('param_n_neighbors')
+
+plt.figure(figsize=(8,5))
+
+plt.plot(
+    plot_data['param_n_neighbors'],
+    plot_data['mean_test_score'] * 100,
+    marker='o',
+    linewidth=2
+)
+
+plt.scatter(
+    grid_search.best_params_['n_neighbors'],
+    grid_search.best_score_ * 100,
+    s=120,
+    label="Best k"
+)
+
+plt.xlabel("Number of Neighbors (k)")
+plt.ylabel("Cross-Validation Accuracy (%)")
+plt.title(f"Accuracy vs. k ({best_metric}, {best_weight})")
+plt.grid(True)
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# %%
+# Distance metric comparison
+
+results = pd.DataFrame(grid_search.cv_results_)
+
+metrics = param_grid['metric']
+metric_scores = []
+
+# Find the best score achieved by each distance metric
+for metric in metrics:
+    best_score = results[
+        results['param_metric'] == metric
+    ]['mean_test_score'].max()
+
+    metric_scores.append(best_score * 100)
+
+plt.figure(figsize=(7,5))
+
+plt.bar(metrics, metric_scores)
+
+plt.ylabel("Best Cross-Validation Accuracy (%)")
+plt.xlabel("Distance Metric")
+plt.title("Comparison of Distance Metrics")
+
+# Add value labels
+for i, score in enumerate(metric_scores):
+    plt.text(i, score + 0.3, f"{score:.2f}%", ha='center')
+
+plt.ylim(0, max(metric_scores) + 5)
+
+plt.tight_layout()
+plt.show()
 
 # ONLY "transform" the test data. Never "fit" on test data (that is cheating!)
 X_test_scaled = scaler.transform(X_test)
@@ -367,3 +438,70 @@ for file_name in os.listdir(unknown_folder):
 
     except Exception as e:
         print(f"Error processing {file_name}: {e}")
+
+# %%
+# Feature comparison experiment
+
+from sklearn.base import clone
+
+# Number of features in each group
+mfcc_size = 2 * n_mfcc          # mean + variance
+chroma_size = 24                # 12 mean + 12 variance
+centroid_size = 2               # mean + variance
+
+feature_sets = {
+    "MFCC only":
+        slice(0, mfcc_size),
+
+    "MFCC + Chroma":
+        slice(0, mfcc_size + chroma_size),
+
+    "MFCC + Chroma + Centroid":
+        slice(0, mfcc_size + chroma_size + centroid_size)
+}
+
+comparison_results = {}
+
+print("\n========== FEATURE COMPARISON ==========\n")
+
+for name, cols in feature_sets.items():
+
+    # Select the desired features
+    X_train_subset = X_train[:, cols]
+    X_test_subset = X_test[:, cols]
+
+    # Scale them
+    scaler_subset = StandardScaler()
+    X_train_scaled_subset = scaler_subset.fit_transform(X_train_subset)
+    X_test_scaled_subset = scaler_subset.transform(X_test_subset)
+
+    # Train using the SAME best parameters
+    knn = KNeighborsClassifier(
+        n_neighbors=grid_search.best_params_["n_neighbors"],
+        metric=grid_search.best_params_["metric"],
+        weights=grid_search.best_params_["weights"]
+    )
+
+    knn.fit(X_train_scaled_subset, y_train)
+
+    # Predict segment labels
+    y_pred = knn.predict(X_test_scaled_subset)
+
+    # Majority vote per song
+    temp_df = pd.DataFrame({
+        "song_id": groups_test,
+        "true": y_test,
+        "pred": y_pred
+    })
+
+    song_results = temp_df.groupby("song_id").agg(
+        true=("true", "first"),
+        pred=("pred", lambda x: x.mode()[0])
+    )
+
+    accuracy = accuracy_score(song_results["true"], song_results["pred"])
+    comparison_results[name] = accuracy
+
+    print(f"{name:25s}: {accuracy*100:.2f}%")
+
+# %%
