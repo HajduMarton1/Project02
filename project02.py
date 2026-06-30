@@ -235,6 +235,9 @@ plt.ylim(0, max(metric_scores) + 5)
 plt.tight_layout()
 plt.show()
 
+#%%
+# Testing report
+
 # Only "transform" the test data
 X_test_scaled = scaler.transform(X_test)
 
@@ -268,19 +271,80 @@ print("Detailed Classification Report (Song Level):")
 print(classification_report(song_predictions['true_genre'], song_predictions['predicted_genre']))
 
 # %%
-# Feature plots
+
+# Feature plots with sorted genres
 
 import matplotlib.pyplot as plt
+import numpy as np
 
-plt.imshow((X[:, :n_mfcc].T), cmap='viridis', origin='lower', aspect=200)
-plt.title("Averaged MFCCs")
-plt.xlabel("Song number")
-plt.ylabel("MFCC coefficient")
+# Sorting data by genre
+sort_idx = np.argsort(y)
+X_sorted = X[sort_idx]
+y_sorted = y[sort_idx]
+
+# Finding the transition indices where genres change
+transition_indices = np.flatnonzero(y_sorted[:-1] != y_sorted[1:]) + 1
+
+# Getting the genre names at each block for labeling
+unique_genres, unique_indices = np.unique(y_sorted, return_index=True)
+genre_order = [y_sorted[idx] for idx in sorted(unique_indices)]
+
+# Calculating the middle point of each genre block to center the text labels
+block_starts = np.insert(transition_indices, 0, 0)
+block_ends = np.append(transition_indices, len(y_sorted))
+label_positions = (block_starts + block_ends) / 2
+
+
+# =====================================================================
+# --- PLOT 1: AVERAGED MFCCs ---
+# =====================================================================
+fig1, ax1 = plt.subplots(figsize=(12, 5))
+
+# Skipping MFCC 0 / loudness
+im1 = ax1.imshow(X_sorted[:, 1:n_mfcc].T, cmap='viridis', origin='lower', aspect=500,
+                vmin = 0, vmax = 100)
+ax1.set_title("Averaged MFCCs (Grouped by Genre)\n\n", fontsize=14, weight='bold')
+ax1.set_xlabel("Segment number")
+ax1.set_ylabel("MFCC coefficient")
+ax1.set_ylim(1, n_mfcc-2)
+fig1.colorbar(im1, ax=ax1, shrink=0.8, label="Magnitude")
+
+# Drawiing vertical lines at transitions
+for x_pos in transition_indices:
+    ax1.axvline(x=x_pos, color='white', linestyle='--', alpha=0.7, linewidth=1.5)
+
+# Placing labels above the plot area
+for label, pos in zip(genre_order, label_positions):
+    ax1.text(pos, 1.02, label, color='black', weight='bold', 
+             ha='center', va='bottom', rotation=30, fontsize=10,
+             transform=ax1.get_xaxis_transform())
+
+plt.tight_layout()
 plt.show()
-plt.imshow((X[:, n_mfcc:2*n_mfcc].T), cmap='viridis', origin='lower', aspect=200)
-plt.title("Variance of MFCCs")
-plt.xlabel("Song number")
-plt.ylabel("MFCC coefficient")
+
+
+# =====================================================================
+# --- PLOT 2: VARIANCE OF MFCCs ---
+# =====================================================================
+fig2, ax2 = plt.subplots(figsize=(12, 5))
+
+im2 = ax2.imshow(X_sorted[:, n_mfcc+1 : 2*n_mfcc].T, cmap='viridis', origin='lower', aspect=500,
+                vmin = 0, vmax = 1000)
+ax2.set_title("Variance of MFCCs (Grouped by Genre)\n\n", fontsize=14, weight='bold')
+ax2.set_xlabel("Segment number")
+ax2.set_ylabel("MFCC coefficient")
+ax2.set_ylim(1, n_mfcc-2)
+fig2.colorbar(im2, ax=ax2, shrink=0.8, label="Variance")
+
+for x_pos in transition_indices:
+    ax2.axvline(x=x_pos, color='white', linestyle='--', alpha=0.7, linewidth=1.5)
+
+for label, pos in zip(genre_order, label_positions):
+    ax2.text(pos, 1.02, label, color='black', weight='bold', 
+             ha='center', va='bottom', rotation=30, fontsize=10,
+             transform=ax2.get_xaxis_transform())
+
+plt.tight_layout()
 plt.show()
 
 # %%
@@ -503,4 +567,58 @@ for name, cols in feature_sets.items():
 
     print(f"{name:25s}: {accuracy*100:.2f}%")
 
+# %%
+#Single song visualization
+
+# 1. Scale the entire dataset
+scaler_full = StandardScaler()
+X_scaled_full = scaler_full.fit_transform(X)
+
+# 2. Fit t-SNE on the ENTIRE dataset to maintain global context
+tsne = TSNE(n_components=2, random_state=42)
+X_embedded = tsne.fit_transform(X_scaled_full)
+
+# 3. Choose ONE song to highlight
+# (Picking the very first song in the groups array as our target)
+target_song_id = groups[0] 
+target_genre = y[0]
+
+# 4. Package data into a DataFrame for easy plotting
+df_tsne = pd.DataFrame(X_embedded, columns=['Component 1', 'Component 2'])
+df_tsne['Song ID'] = groups
+df_tsne['Is Target'] = df_tsne['Song ID'] == target_song_id
+
+# 5. Plot the results
+plt.figure(figsize=(10, 7))
+
+# Plot background points (all other songs)
+sns.scatterplot(
+    data=df_tsne[~df_tsne['Is Target']], 
+    x='Component 1', 
+    y='Component 2', 
+    color='lightgray', 
+    alpha=0.4, 
+    edgecolor='none',
+    label='Other Songs'
+)
+
+# Plot the 10 segments of our target song
+sns.scatterplot(
+    data=df_tsne[df_tsne['Is Target']], 
+    x='Component 1', 
+    y='Component 2', 
+    color='red', 
+    s=120,          # Increase marker size
+    edgecolor='black',
+    linewidth=1.5,  # Add a distinct border
+    label=f'Target: {target_song_id} ({target_genre})'
+)
+
+plt.title(f"t-SNE: Visualizing Segment Clustering for a Single Song", fontsize=14, fontweight='bold')
+plt.xlabel("t-SNE Component 1")
+plt.ylabel("t-SNE Component 2")
+plt.legend()
+plt.tight_layout()
+
+plt.show()
 # %%
