@@ -53,14 +53,14 @@ def load_music_data(folder_path, n_mfcc=13):
                         mfccs_mean = np.mean(mfccs.T, axis=0)
                         mfccs_var = np.var(mfccs.T, axis=0)
                         
-                        """# 2. Delta & Delta-Delta MFCCs (Temporal change of Timbre)
+                        # 2. Delta & Delta-Delta MFCCs (Temporal change of Timbre)
                         delta_mfccs = librosa.feature.delta(mfccs)
                         delta_mfccs_mean = np.mean(delta_mfccs.T, axis=0)
                         delta_mfccs_var = np.var(delta_mfccs.T, axis=0)
                         
                         delta2_mfccs = librosa.feature.delta(mfccs, order=2)
                         delta2_mfccs_mean = np.mean(delta2_mfccs.T, axis=0)
-                        delta2_mfccs_var = np.var(delta2_mfccs.T, axis=0)"""
+                        delta2_mfccs_var = np.var(delta2_mfccs.T, axis=0)
                         
                         # 3. Chroma STFT (Harmony / Pitch Classes)
                         chroma = librosa.feature.chroma_stft(y=segment, sr=sample_rate)
@@ -72,18 +72,23 @@ def load_music_data(folder_path, n_mfcc=13):
                         centroid_mean = np.mean(centroid.T, axis=0)
                         centroid_var = np.var(centroid.T, axis=0)
                         
-                        """# 5. Tempo / BPM (Rhythm)
+                        # 5. Tempo / BPM (Rhythm)
                         tempo_data, _ = librosa.beat.beat_track(y=segment, sr=sample_rate)
                         # Wrap in np.array to ensure it stacks cleanly horizontally
-                        tempo = np.array([np.mean(tempo_data)])"""
+                        tempo = np.array([np.mean(tempo_data)])
 
                         # Combine all features into one row
                         feature_vector = np.hstack((
-                            mfccs_mean, mfccs_var,
-                            #delta_mfccs_mean, delta_mfccs_var,
-                            #delta2_mfccs_mean, delta2_mfccs_var,
-                            chroma_mean, chroma_var,
-                            centroid_mean, centroid_var,
+                            mfccs_mean, 
+                            mfccs_var,
+                            #delta_mfccs_mean, 
+                            #delta_mfccs_var,
+                            delta2_mfccs_mean, 
+                            delta2_mfccs_var,
+                            chroma_mean, 
+                            chroma_var,
+                            centroid_mean, 
+                            centroid_var,
                             #tempo
                         ))
                         
@@ -149,7 +154,7 @@ X_train_scaled = scaler.fit_transform(X_train)
 # This searches for the best parameters number using cv-fold cross validation - Hyperparameter?
 param_grid = {
     'n_neighbors': 3 + 2*np.arange(15),
-    'metric': ['euclidean', 'minkowski', 'cosine', 'hamming'],
+    'metric': ['euclidean', 'minkowski', 'cosine', 'manhattan'],
     'weights': ['uniform', 'distance']
     }
 
@@ -163,8 +168,42 @@ print(f"Best K Value: {grid_search.best_params_['n_neighbors']}")
 print(f"Best distance type: {grid_search.best_params_['metric']}")
 print(f"Best weighting type: {grid_search.best_params_['weights']}")
 
+# Only transform the test data
+X_test_scaled = scaler.transform(X_test)
+
+# Making Predictions and Evaluation
+best_knn = grid_search.best_estimator_
+
+# Predict on the 3-second segments
+y_pred_segments = best_knn.predict(X_test_scaled)
+
+# Putting the results into a Pandas DataFrame for easy grouping
+results_df = pd.DataFrame({
+    'song_id': groups_test,
+    'true_label': y_test,
+    'pred_label': y_pred_segments
+})
+
+# Group by song_id, take the first true label, and find the mode 
+# (most common) prediction
+song_predictions = results_df.groupby('song_id').agg(
+    true_genre=('true_label', 'first'),
+    predicted_genre=('pred_label', lambda x: x.mode()[0])
+)
+
+final_accuracy = accuracy_score(song_predictions['true_genre'], song_predictions['predicted_genre'])
+
+print(f"Best CV Accuracy (GroupKFold): {grid_search.best_score_ * 100:.2f}%")
+print(f"Segment-level Accuracy: {accuracy_score(y_test, y_pred_segments) * 100:.2f}%")
+print(f"Song-level Accuracy (Majority Vote): {final_accuracy * 100:.2f}%\n")
+
+print("Detailed Classification Report (Song Level):")
+print(classification_report(song_predictions['true_genre'], song_predictions['predicted_genre']))
+
 # %%
 # Accuracy vs. k plot
+
+import matplotlib.pyplot as plt
 
 results = pd.DataFrame(grid_search.cv_results_)
 
@@ -235,43 +274,7 @@ plt.ylim(0, max(metric_scores) + 5)
 plt.tight_layout()
 plt.show()
 
-#%%
-# Testing report
-
-# Only "transform" the test data
-X_test_scaled = scaler.transform(X_test)
-
-# Making Predictions and Evaluation
-best_knn = grid_search.best_estimator_
-
-# Predict on the 3-second segments
-y_pred_segments = best_knn.predict(X_test_scaled)
-
-# Putting the results into a Pandas DataFrame for easy grouping
-results_df = pd.DataFrame({
-    'song_id': groups_test,
-    'true_label': y_test,
-    'pred_label': y_pred_segments
-})
-
-# Group by song_id, take the first true label, and find the mode 
-# (most common) prediction
-song_predictions = results_df.groupby('song_id').agg(
-    true_genre=('true_label', 'first'),
-    predicted_genre=('pred_label', lambda x: x.mode()[0])
-)
-
-final_accuracy = accuracy_score(song_predictions['true_genre'], song_predictions['predicted_genre'])
-
-print(f"Best CV Accuracy (GroupKFold): {grid_search.best_score_ * 100:.2f}%")
-print(f"Segment-level Accuracy: {accuracy_score(y_test, y_pred_segments) * 100:.2f}%")
-print(f"Song-level Accuracy (Majority Vote): {final_accuracy * 100:.2f}%\n")
-
-print("Detailed Classification Report (Song Level):")
-print(classification_report(song_predictions['true_genre'], song_predictions['predicted_genre']))
-
 # %%
-
 # Feature plots with sorted genres
 
 import matplotlib.pyplot as plt
@@ -293,7 +296,6 @@ genre_order = [y_sorted[idx] for idx in sorted(unique_indices)]
 block_starts = np.insert(transition_indices, 0, 0)
 block_ends = np.append(transition_indices, len(y_sorted))
 label_positions = (block_starts + block_ends) / 2
-
 
 # =====================================================================
 # --- PLOT 1: AVERAGED MFCCs ---
@@ -321,7 +323,6 @@ for label, pos in zip(genre_order, label_positions):
 
 plt.tight_layout()
 plt.show()
-
 
 # =====================================================================
 # --- PLOT 2: VARIANCE OF MFCCs ---
@@ -414,6 +415,159 @@ plt.tight_layout()
 plt.show()
 
 # %%
+# Feature comparison experiment
+
+import itertools
+import pandas as pd
+from sklearn.base import clone
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
+
+# Define the exact sizes based on the extraction block
+mfcc_size = 2 * n_mfcc           # mean + var
+delta_size = 2 * n_mfcc          # mean + var
+delta2_size = 2 * n_mfcc         # mean + var
+chroma_size = 24                 # 12 mean + 12 var
+centroid_size = 2                # 1 mean + 1 var
+tempo_size = 1                   # 1 mean
+
+feature_sizes = {
+    "MFCC": mfcc_size,
+    "Delta": delta_size,
+    "Delta2": delta2_size,
+    "Chroma": chroma_size,
+    "Centroid": centroid_size,
+    "Tempo": tempo_size
+}
+
+# Map column indices for each feature block sequentially
+feature_indices = {}
+current_idx = 0
+for name, size in feature_sizes.items():
+    feature_indices[name] = list(range(current_idx, current_idx + size))
+    current_idx += size
+
+# Generate all possible combinations
+feature_sets = {}
+feature_names = list(feature_sizes.keys())
+
+for r in range(1, len(feature_names) + 1):
+    for combo in itertools.combinations(feature_names, r):
+        combo_name = " + ".join(combo)
+        combined_indices = []
+        for name in combo:
+            combined_indices.extend(feature_indices[name])
+        feature_sets[combo_name] = combined_indices
+
+# Comparison loop
+comparison_results = {}
+
+print(f"\n========== FEATURE COMPARISON ({len(feature_sets)} combinations) ==========\n")
+
+for name, cols in feature_sets.items():
+
+    # Select the desired features
+    X_train_subset = X_train[:, cols]
+    X_test_subset = X_test[:, cols]
+
+    # Scale them
+    scaler_subset = StandardScaler()
+    X_train_scaled_subset = scaler_subset.fit_transform(X_train_subset)
+    X_test_scaled_subset = scaler_subset.transform(X_test_subset)
+
+    # Train using the same best parameters found during GridSearch
+    knn = KNeighborsClassifier(
+        n_neighbors=grid_search.best_params_["n_neighbors"],
+        metric=grid_search.best_params_["metric"],
+        weights=grid_search.best_params_["weights"]
+    )
+
+    knn.fit(X_train_scaled_subset, y_train)
+
+    # Predict segment labels
+    y_pred = knn.predict(X_test_scaled_subset)
+
+    # Majority vote per song
+    temp_df = pd.DataFrame({
+        "song_id": groups_test,
+        "true": y_test,
+        "pred": y_pred
+    })
+
+    song_results = temp_df.groupby("song_id").agg(
+        true=("true", "first"),
+        pred=("pred", lambda x: x.mode()[0])
+    )
+
+    accuracy = accuracy_score(song_results["true"], song_results["pred"])
+    comparison_results[name] = accuracy
+
+# Display the Top 10 Best Performing Combinations
+print("\n--- TOP 10 FEATURE COMBINATIONS ---")
+
+# Sort the dictionary by accuracy in descending order
+sorted_results = sorted(comparison_results.items(), key=lambda item: item[1], reverse=True)
+
+for i, (name, acc) in enumerate(sorted_results[:10]):
+    print(f"{i+1}. {name:50s} : {acc*100:.2f}%")
+
+# %%
+#Single song visualization
+
+# 1. Scale the entire dataset
+scaler_full = StandardScaler()
+X_scaled_full = scaler_full.fit_transform(X)
+
+# 2. Fit t-SNE on the entire dataset
+tsne = TSNE(n_components=2, random_state=42)
+X_embedded = tsne.fit_transform(X_scaled_full)
+
+# 3. Choose one song to highlight
+# (Picking the very first song in the groups array as the target)
+target_song_id = groups[0] 
+target_genre = y[0]
+
+# 4. Package data into a DataFrame for easy plotting
+df_tsne = pd.DataFrame(X_embedded, columns=['Component 1', 'Component 2'])
+df_tsne['Song ID'] = groups
+df_tsne['Is Target'] = df_tsne['Song ID'] == target_song_id
+
+# 5. Plot the results
+plt.figure(figsize=(10, 7))
+
+# Plot background points (all other songs)
+sns.scatterplot(
+    data=df_tsne[~df_tsne['Is Target']], 
+    x='Component 1', 
+    y='Component 2', 
+    color='lightgray', 
+    alpha=0.4, 
+    edgecolor='none',
+    label='Other Songs'
+)
+
+# Plot the 10 segments of the target song
+sns.scatterplot(
+    data=df_tsne[df_tsne['Is Target']], 
+    x='Component 1', 
+    y='Component 2', 
+    color='red', 
+    s=120,          # Increase marker size
+    edgecolor='black',
+    linewidth=1.5,  # Add a distinct border
+    label=f'Target: {target_song_id} ({target_genre})'
+)
+
+plt.title(f"t-SNE: Visualizing Segment Clustering for a Single Song", fontsize=14, fontweight='bold')
+plt.xlabel("t-SNE Component 1")
+plt.ylabel("t-SNE Component 2")
+plt.legend()
+plt.tight_layout()
+
+plt.show()
+
+# %%
 # Predict genres of new (imported) songs
 
 from pathlib import Path
@@ -501,124 +655,3 @@ for file_name in os.listdir(unknown_folder):
 
     except Exception as e:
         print(f"Error processing {file_name}: {e}")
-
-# %%
-# Feature comparison experiment
-
-from sklearn.base import clone
-
-# Number of features in each group
-mfcc_size = 2 * n_mfcc          # mean + variance
-chroma_size = 24                # 12 mean + 12 variance
-centroid_size = 2               # mean + variance
-
-feature_sets = {
-    "MFCC only":
-        slice(0, mfcc_size),
-
-    "MFCC + Chroma":
-        slice(0, mfcc_size + chroma_size),
-
-    "MFCC + Chroma + Centroid":
-        slice(0, mfcc_size + chroma_size + centroid_size)
-}
-
-comparison_results = {}
-
-print("\n========== FEATURE COMPARISON ==========\n")
-
-for name, cols in feature_sets.items():
-
-    # Select the desired features
-    X_train_subset = X_train[:, cols]
-    X_test_subset = X_test[:, cols]
-
-    # Scale them
-    scaler_subset = StandardScaler()
-    X_train_scaled_subset = scaler_subset.fit_transform(X_train_subset)
-    X_test_scaled_subset = scaler_subset.transform(X_test_subset)
-
-    # Train using the SAME best parameters
-    knn = KNeighborsClassifier(
-        n_neighbors=grid_search.best_params_["n_neighbors"],
-        metric=grid_search.best_params_["metric"],
-        weights=grid_search.best_params_["weights"]
-    )
-
-    knn.fit(X_train_scaled_subset, y_train)
-
-    # Predict segment labels
-    y_pred = knn.predict(X_test_scaled_subset)
-
-    # Majority vote per song
-    temp_df = pd.DataFrame({
-        "song_id": groups_test,
-        "true": y_test,
-        "pred": y_pred
-    })
-
-    song_results = temp_df.groupby("song_id").agg(
-        true=("true", "first"),
-        pred=("pred", lambda x: x.mode()[0])
-    )
-
-    accuracy = accuracy_score(song_results["true"], song_results["pred"])
-    comparison_results[name] = accuracy
-
-    print(f"{name:25s}: {accuracy*100:.2f}%")
-
-# %%
-#Single song visualization
-
-# 1. Scale the entire dataset
-scaler_full = StandardScaler()
-X_scaled_full = scaler_full.fit_transform(X)
-
-# 2. Fit t-SNE on the ENTIRE dataset to maintain global context
-tsne = TSNE(n_components=2, random_state=42)
-X_embedded = tsne.fit_transform(X_scaled_full)
-
-# 3. Choose ONE song to highlight
-# (Picking the very first song in the groups array as our target)
-target_song_id = groups[0] 
-target_genre = y[0]
-
-# 4. Package data into a DataFrame for easy plotting
-df_tsne = pd.DataFrame(X_embedded, columns=['Component 1', 'Component 2'])
-df_tsne['Song ID'] = groups
-df_tsne['Is Target'] = df_tsne['Song ID'] == target_song_id
-
-# 5. Plot the results
-plt.figure(figsize=(10, 7))
-
-# Plot background points (all other songs)
-sns.scatterplot(
-    data=df_tsne[~df_tsne['Is Target']], 
-    x='Component 1', 
-    y='Component 2', 
-    color='lightgray', 
-    alpha=0.4, 
-    edgecolor='none',
-    label='Other Songs'
-)
-
-# Plot the 10 segments of our target song
-sns.scatterplot(
-    data=df_tsne[df_tsne['Is Target']], 
-    x='Component 1', 
-    y='Component 2', 
-    color='red', 
-    s=120,          # Increase marker size
-    edgecolor='black',
-    linewidth=1.5,  # Add a distinct border
-    label=f'Target: {target_song_id} ({target_genre})'
-)
-
-plt.title(f"t-SNE: Visualizing Segment Clustering for a Single Song", fontsize=14, fontweight='bold')
-plt.xlabel("t-SNE Component 1")
-plt.ylabel("t-SNE Component 2")
-plt.legend()
-plt.tight_layout()
-
-plt.show()
-# %%
