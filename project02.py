@@ -128,7 +128,7 @@ from sklearn.model_selection import GroupShuffleSplit # For protection against
 # target leakage
 
 # Split the data, keeping segments of the same song together
-gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=20)
+gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=27)
 
 # gss.split yields indices for train and test
 train_idx, test_idx = next(gss.split(X, y, groups=groups))
@@ -160,17 +160,33 @@ knn_pipeline = Pipeline([
     ('knn', KNeighborsClassifier())
 ])
 
-knn_param_grid = {
-    'knn__n_neighbors': 3 + 2 * np.arange(15),
-    'knn__metric': ['euclidean', 'minkowski', 'cosine', 'manhattan'],
-    'knn__weights': ['uniform', 'distance']
-}
+# Base parameters used across all metrics
+neighbors = 3 + 2 * np.arange(15)
+weights = ['uniform', 'distance']
+
+knn_param_grid = [
+    {
+        # Grid 1: Metrics that do not use the 'p' parameter
+        'knn__n_neighbors': neighbors,
+        'knn__weights': weights,
+        'knn__metric': ['euclidean', 'cosine', 'manhattan']
+    },
+    {
+        # Grid 2: Minkowski metric specifically exploring higher 'p' values
+        'knn__n_neighbors': neighbors,
+        'knn__weights': weights,
+        'knn__metric': ['minkowski'],
+        'knn__p': [3, 4, 5] # Only test p >= 3 since p=1 (Manhattan) and p=2 (Euclidean) are covered above
+    }
+]
 
 knn_grid_search = GridSearchCV(knn_pipeline, knn_param_grid, cv=gkf, scoring='accuracy')
 knn_grid_search.fit(X_train, y_train, groups=groups_train)
 
 print(f"Best K Value: {knn_grid_search.best_params_['knn__n_neighbors']}")
 print(f"Best distance type: {knn_grid_search.best_params_['knn__metric']}")
+if (knn_grid_search.best_params_['knn__metric'] == "minkowski"):
+    print(f"Best p value: {knn_grid_search.best_params_['knn__p']}")
 print(f"Best weighting type: {knn_grid_search.best_params_['knn__weights']}\n")
 
 
@@ -209,7 +225,7 @@ def evaluate_model(model_name, grid_search_object):
 
     Parameters: Name of model (string), grid search object
     """
-    
+
     best_model = grid_search_object.best_estimator_
     
     # Predict on the 3-second segments
@@ -262,14 +278,14 @@ plot_data = results[
 plt.figure(figsize=(8,5))
 
 plt.plot(
-    plot_data['param_knn__n_neighbors'], # FIX
+    plot_data['param_knn__n_neighbors'],
     plot_data['mean_test_score'] * 100,
     marker='o',
     linewidth=2
 )
 
 plt.scatter(
-    knn_grid_search.best_params_['knn__n_neighbors'], # FIX
+    knn_grid_search.best_params_['knn__n_neighbors'],
     knn_grid_search.best_score_ * 100,
     s=120,
     label="Best k"
@@ -290,7 +306,7 @@ plt.show()
 
 results = pd.DataFrame(knn_grid_search.cv_results_)
 
-metrics = knn_param_grid['knn__metric']
+metrics = results['param_knn__metric'].dropna().unique()
 metric_scores = []
 
 # Find the best score achieved by each distance metric
@@ -393,7 +409,7 @@ plt.tight_layout()
 plt.show()
 
 #%%
-#Other feature plots
+# Other feature plots
 
 # =====================================================================
 # BPM
@@ -612,27 +628,27 @@ for i, (name, acc) in enumerate(sorted_results[-10:]):
     print(f"{i+54}. {name:50s} : {acc*100:.2f}%")
 
 # %%
-#Single song visualization
+# Single song visualization
 
-# 1. Scale the entire dataset
+# Scale the entire dataset
 scaler_full = StandardScaler()
 X_scaled_full = scaler_full.fit_transform(X)
 
-# 2. Fit t-SNE on the entire dataset
+# Fit t-SNE on the entire dataset
 tsne = TSNE(n_components=2, random_state=42)
 X_embedded = tsne.fit_transform(X_scaled_full)
 
-# 3. Choose one song to highlight
+# Choose one song to highlight
 # (Picking the very first song in the groups array as the target)
 target_song_id = groups[0] 
 target_genre = y[0]
 
-# 4. Package data into a DataFrame for easy plotting
+# Package data into a DataFrame for easy plotting
 df_tsne = pd.DataFrame(X_embedded, columns=['Component 1', 'Component 2'])
 df_tsne['Song ID'] = groups
 df_tsne['Is Target'] = df_tsne['Song ID'] == target_song_id
 
-# 5. Plot the results
+# Plot the results
 plt.figure(figsize=(10, 7))
 
 # Plot background points (all other songs)
