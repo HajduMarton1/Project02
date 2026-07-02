@@ -81,15 +81,15 @@ def load_music_data(folder_path, n_mfcc=13):
                         feature_vector = np.hstack((
                             mfccs_mean, 
                             mfccs_var,
-                            #delta_mfccs_mean, 
-                            #delta_mfccs_var,
+                            delta_mfccs_mean, 
+                            delta_mfccs_var,
                             delta2_mfccs_mean, 
                             delta2_mfccs_var,
                             chroma_mean, 
                             chroma_var,
                             centroid_mean, 
                             centroid_var,
-                            #tempo
+                            tempo
                         ))
                         
                         genre = ''.join([char for char in file_name if char.isalpha()]).replace("wav", "")
@@ -114,7 +114,7 @@ def load_music_data(folder_path, n_mfcc=13):
 from pathlib import Path
 
 folder_path = Path.cwd() / "Data" / "genres_original"
-n_mfcc=15 #Mfcc feature number ~ hyperparameter
+n_mfcc=20 #Mfcc feature number ~ hyperparameter
 X, y, groups = load_music_data(folder_path, n_mfcc) 
 print(len(y))
 print(np.shape(X))
@@ -128,7 +128,7 @@ from sklearn.model_selection import GroupShuffleSplit # For protection against
 # target leakage
 
 # Split the data, keeping segments of the same song together
-gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=50)
+gss = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=20)
 
 # gss.split yields indices for train and test
 train_idx, test_idx = next(gss.split(X, y, groups=groups))
@@ -138,95 +138,139 @@ y_train, y_test = y[train_idx], y[test_idx]
 groups_train, groups_test = groups[train_idx], groups[test_idx]
 
 # %%
-# kNN model
+# Model Training and Evaluation (kNN & Random Forest)
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV, GroupKFold
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import GroupKFold #Against target leakage
 
-scaler = StandardScaler()
-
-# "Fit" learns the mean/variance of the training data, "transform" applies it
-X_train_scaled = scaler.fit_transform(X_train)
-
-# This searches for the best parameters number using cv-fold cross validation - Hyperparameter?
-param_grid = {
-    'n_neighbors': 3 + 2*np.arange(15),
-    'metric': ['euclidean', 'minkowski', 'cosine', 'manhattan'],
-    'weights': ['uniform', 'distance']
-    }
-
-# GroupKFold split with 5 splits
+# 1. Define the GroupKFold cross-validation strategy
 gkf = GroupKFold(n_splits=5)
 
-grid_search = GridSearchCV(KNeighborsClassifier(), param_grid, cv=gkf, scoring='accuracy', return_train_score=True)
-grid_search.fit(X_train_scaled, y_train, groups=groups_train)
+# =====================================================================
+# K-NEAREST NEIGHBORS (kNN)
+# =====================================================================
+print("--- Training K-Nearest Neighbors ---")
 
-print(f"Best K Value: {grid_search.best_params_['n_neighbors']}")
-print(f"Best distance type: {grid_search.best_params_['metric']}")
-print(f"Best weighting type: {grid_search.best_params_['weights']}")
+knn_pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('knn', KNeighborsClassifier())
+])
 
-# Only transform the test data
-X_test_scaled = scaler.transform(X_test)
+knn_param_grid = {
+    'knn__n_neighbors': 3 + 2 * np.arange(15),
+    'knn__metric': ['euclidean', 'minkowski', 'cosine', 'manhattan'],
+    'knn__weights': ['uniform', 'distance']
+}
 
-# Making Predictions and Evaluation
-best_knn = grid_search.best_estimator_
+knn_grid_search = GridSearchCV(knn_pipeline, knn_param_grid, cv=gkf, scoring='accuracy')
+knn_grid_search.fit(X_train, y_train, groups=groups_train)
 
-# Predict on the 3-second segments
-y_pred_segments = best_knn.predict(X_test_scaled)
+print(f"Best K Value: {knn_grid_search.best_params_['knn__n_neighbors']}")
+print(f"Best distance type: {knn_grid_search.best_params_['knn__metric']}")
+print(f"Best weighting type: {knn_grid_search.best_params_['knn__weights']}\n")
 
-# Putting the results into a Pandas DataFrame for easy grouping
-results_df = pd.DataFrame({
-    'song_id': groups_test,
-    'true_label': y_test,
-    'pred_label': y_pred_segments
-})
 
-# Group by song_id, take the first true label, and find the mode 
-# (most common) prediction
-song_predictions = results_df.groupby('song_id').agg(
-    true_genre=('true_label', 'first'),
-    predicted_genre=('pred_label', lambda x: x.mode()[0])
-)
+# =====================================================================
+# RANDOM FOREST (RF)
+# =====================================================================
+print("--- Training Random Forest ---")
 
-final_accuracy = accuracy_score(song_predictions['true_genre'], song_predictions['predicted_genre'])
+# Tree-based models don't strictly require scaling, but a pipeline 
+# keeps the structure clean and consistent.
+rf_pipeline = Pipeline([
+    ('scaler', StandardScaler()), 
+    ('rf', RandomForestClassifier(random_state=1))
+])
 
-print(f"Best CV Accuracy (GroupKFold): {grid_search.best_score_ * 100:.2f}%")
-print(f"Segment-level Accuracy: {accuracy_score(y_test, y_pred_segments) * 100:.2f}%")
-print(f"Song-level Accuracy (Majority Vote): {final_accuracy * 100:.2f}%\n")
+rf_param_grid = {
+    'rf__n_estimators': [50, 100, 200],
+    'rf__max_depth': [None, 10, 20],
+    'rf__min_samples_split': [2, 5, 10]
+}
 
-print("Detailed Classification Report (Song Level):")
-print(classification_report(song_predictions['true_genre'], song_predictions['predicted_genre']))
+rf_grid_search = GridSearchCV(rf_pipeline, rf_param_grid, cv=gkf, scoring='accuracy')
+rf_grid_search.fit(X_train, y_train, groups=groups_train)
+
+print(f"Best Estimators: {rf_grid_search.best_params_['rf__n_estimators']}")
+print(f"Best Max Depth: {rf_grid_search.best_params_['rf__max_depth']}")
+print(f"Best Min Samples Split: {rf_grid_search.best_params_['rf__min_samples_split']}\n")
+
+
+# =====================================================================
+# EVALUATION FUNCTION
+# =====================================================================
+def evaluate_model(model_name, grid_search_object):
+    """
+    Evaluates the testing on both models
+
+    Parameters: Name of model (string), grid search object
+    """
+    
+    best_model = grid_search_object.best_estimator_
+    
+    # Predict on the 3-second segments
+    y_pred_segments = best_model.predict(X_test)
+    
+    # Organize results into a DataFrame for song-level voting
+    results_df = pd.DataFrame({
+        'song_id': groups_test,
+        'true_label': y_test,
+        'pred_label': y_pred_segments
+    })
+    
+    # Group by song_id, take the first true label, and find the mode prediction
+    song_predictions = results_df.groupby('song_id').agg(
+        true_genre=('true_label', 'first'),
+        predicted_genre=('pred_label', lambda x: x.mode()[0])
+    )
+    
+    final_accuracy = accuracy_score(song_predictions['true_genre'], song_predictions['predicted_genre'])
+    
+    print(f"===== {model_name} Results =====")
+    print(f"Best CV Accuracy (GroupKFold): {grid_search_object.best_score_ * 100:.2f}%")
+    print(f"Segment-level Accuracy: {accuracy_score(y_test, y_pred_segments) * 100:.2f}%")
+    print(f"Song-level Accuracy (Majority Vote): {final_accuracy * 100:.2f}%\n")
+    
+    print(f"Detailed Classification Report ({model_name} Song Level):")
+    print(classification_report(song_predictions['true_genre'], song_predictions['predicted_genre']))
+    print("\n" + "="*50 + "\n")
+    return song_predictions
+
+# Run evaluation for both models
+knn_song_predictions = evaluate_model("kNN", knn_grid_search)
+rf_song_predictions = evaluate_model("Random Forest", rf_grid_search)
 
 # %%
 # Accuracy vs. k plot
 
 import matplotlib.pyplot as plt
 
-results = pd.DataFrame(grid_search.cv_results_)
+results = pd.DataFrame(knn_grid_search.cv_results_)
 
-best_metric = grid_search.best_params_['metric']
-best_weight = grid_search.best_params_['weights']
+best_metric = knn_grid_search.best_params_['knn__metric']
+best_weight = knn_grid_search.best_params_['knn__weights']
 
 plot_data = results[
-    (results['param_metric'] == best_metric) &
-    (results['param_weights'] == best_weight)
-].sort_values('param_n_neighbors')
+    (results['param_knn__metric'] == best_metric) &
+    (results['param_knn__weights'] == best_weight)
+].sort_values('param_knn__n_neighbors')
 
 plt.figure(figsize=(8,5))
 
 plt.plot(
-    plot_data['param_n_neighbors'],
+    plot_data['param_knn__n_neighbors'], # FIX
     plot_data['mean_test_score'] * 100,
     marker='o',
     linewidth=2
 )
 
 plt.scatter(
-    grid_search.best_params_['n_neighbors'],
-    grid_search.best_score_ * 100,
+    knn_grid_search.best_params_['knn__n_neighbors'], # FIX
+    knn_grid_search.best_score_ * 100,
     s=120,
     label="Best k"
 )
@@ -244,15 +288,15 @@ plt.show()
 # %%
 # Distance metric comparison
 
-results = pd.DataFrame(grid_search.cv_results_)
+results = pd.DataFrame(knn_grid_search.cv_results_)
 
-metrics = param_grid['metric']
+metrics = knn_param_grid['knn__metric']
 metric_scores = []
 
 # Find the best score achieved by each distance metric
 for metric in metrics:
     best_score = results[
-        results['param_metric'] == metric
+        results['param_knn__metric'] == metric
     ]['mean_test_score'].max()
 
     metric_scores.append(best_score * 100)
@@ -311,7 +355,7 @@ ax1.set_ylabel("MFCC coefficient")
 ax1.set_ylim(1, n_mfcc-2)
 fig1.colorbar(im1, ax=ax1, shrink=0.8, label="Magnitude")
 
-# Drawiing vertical lines at transitions
+# Drawing vertical lines at transitions
 for x_pos in transition_indices:
     ax1.axvline(x=x_pos, color='white', linestyle='--', alpha=0.7, linewidth=1.5)
 
@@ -348,6 +392,50 @@ for label, pos in zip(genre_order, label_positions):
 plt.tight_layout()
 plt.show()
 
+#%%
+#Other feature plots
+
+# =====================================================================
+# BPM
+# =====================================================================
+fig1, ax1 = plt.subplots(figsize=(12, 5))
+
+im1 = ax1.plot(X_sorted[:, -1].T)
+ax1.set_title("BMP by song\n\n", fontsize=14, weight='bold')
+ax1.set_xlabel("Song number")
+ax1.set_ylabel("BPM")
+ax1.set_xlim(0, 1000)
+
+# Drawing vertical lines at transitions
+for x_pos in transition_indices:
+    ax1.axvline(x=x_pos, color='black', linestyle='--', alpha=0.7, linewidth=1.5)
+
+# Placing labels above the plot area
+for label, pos in zip(genre_order, label_positions):
+    ax1.text(pos, 1.02, label, color='black', weight='bold', 
+             ha='center', va='bottom', rotation=30, fontsize=10,
+             transform=ax1.get_xaxis_transform())
+
+plt.tight_layout()
+plt.show()
+
+# =====================================================================
+# Average tone (ONLY works with 990 datapoints (full snippets))
+# =====================================================================
+fig1, ax1 = plt.subplots(figsize=(12, 5))
+
+x_avg = X_sorted.reshape(10, 99, 147).mean(axis=1)
+im1 = ax1.imshow(x_avg[:, 6*n_mfcc:6*n_mfcc+12].T, cmap='viridis', origin='lower',
+                vmin = 0.2, vmax = 0.5)
+ax1.set_title("Averaged MFCCs (Grouped by Genre)\n\n", fontsize=14, weight='bold')
+ax1.set_xlabel("Segment number")
+ax1.set_ylabel("MFCC coefficient")
+ax1.set_ylim(1, 11.5)
+fig1.colorbar(im1, ax=ax1, shrink=0.8, label="Magnitude")
+
+plt.tight_layout()
+plt.show()
+
 # %%
 # More visualizations
 
@@ -359,6 +447,8 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 # --- 1. t-SNE PROJECTION ---
 # Reduce dimensions to 2 with t-SNE
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
 tsne = TSNE(n_components=2, random_state=42)
 X_embedded = tsne.fit_transform(X_train_scaled)
 
@@ -402,10 +492,10 @@ plt.show()
 
 # --- 4. CONFUSION MATRIX
 plt.figure(figsize=(12, 10))
-cm = confusion_matrix(song_predictions['true_genre'], song_predictions['predicted_genre'])
+cm = confusion_matrix(knn_song_predictions['true_genre'], knn_song_predictions['predicted_genre'])
 
 # We can get the unique display labels directly from the DataFrame
-unique_genres = sorted(song_predictions['true_genre'].unique())
+unique_genres = sorted(knn_song_predictions['true_genre'].unique())
 
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=unique_genres)
 disp.plot(cmap='Blues', xticks_rotation='vertical', ax=plt.gca())
@@ -478,9 +568,9 @@ for name, cols in feature_sets.items():
 
     # Train using the same best parameters found during GridSearch
     knn = KNeighborsClassifier(
-        n_neighbors=grid_search.best_params_["n_neighbors"],
-        metric=grid_search.best_params_["metric"],
-        weights=grid_search.best_params_["weights"]
+        n_neighbors=knn_grid_search.best_params_["knn__n_neighbors"],
+        metric=knn_grid_search.best_params_["knn__metric"],
+        weights=knn_grid_search.best_params_["knn__weights"]
     )
 
     knn.fit(X_train_scaled_subset, y_train)
@@ -511,6 +601,15 @@ sorted_results = sorted(comparison_results.items(), key=lambda item: item[1], re
 
 for i, (name, acc) in enumerate(sorted_results[:10]):
     print(f"{i+1}. {name:50s} : {acc*100:.2f}%")
+
+# Display the Top 10 Best Performing Combinations
+print("\n--- BOTTOM 10 FEATURE COMBINATIONS ---")
+
+# Sort the dictionary by accuracy in descending order
+sorted_results = sorted(comparison_results.items(), key=lambda item: item[1], reverse=True)
+
+for i, (name, acc) in enumerate(sorted_results[-10:]):
+    print(f"{i+54}. {name:50s} : {acc*100:.2f}%")
 
 # %%
 #Single song visualization
@@ -638,11 +737,11 @@ for file_name in os.listdir(unknown_folder):
             continue
 
         # Scale features
+
         X_new = np.array(feature_list)
-        X_new_scaled = scaler.transform(X_new)
 
         # Predict every segment
-        segment_predictions = best_knn.predict(X_new_scaled)
+        segment_predictions = knn_grid_search.predict(X_new)
 
         # Majority vote
         final_prediction = Counter(segment_predictions).most_common(1)[0][0]
@@ -655,3 +754,6 @@ for file_name in os.listdir(unknown_folder):
 
     except Exception as e:
         print(f"Error processing {file_name}: {e}")
+
+
+# %%
